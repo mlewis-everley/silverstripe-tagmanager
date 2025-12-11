@@ -1,74 +1,26 @@
-<?php
+<?php 
 
-namespace SilverStripe\TagManager\Extension;
+namespace SilverStripe\TagManager\Middleware;
 
-use Prs\Log\LoggerInterface;
-use SilverStripe\Admin\LeftAndMain;
-use SilverStripe\Core\Extension;
-use SilverStripe\Control\Controller;
+use Psr\Log\LoggerInterface;
+use SilverStripe\Admin\AdminRootController;
+use SilverStripe\Control\Director;
 use SilverStripe\Control\HTTPRequest;
-use SilverStripe\ORM\FieldType\DBField;
+use SilverStripe\Dev\DevelopmentAdmin;
 use SilverStripe\Core\Injector\Injector;
 use SilverStripe\TagManager\Model\Snippet;
 use SilverStripe\TagManager\SnippetProvider;
+use SilverStripe\Control\Middleware\HTTPMiddleware;
 use SilverStripe\Core\Config\Config;
-use SilverStripe\Dev\DevBuildController;
-use SilverStripe\Dev\DevelopmentAdmin;
-use SilverStripe\Security\Security;
+use SilverStripe\GraphQL\Controller as GraphQLController;
 
-/**
- * ContentController extension that inserts configured snippets
- */
-class TagInserter extends Extension
+class TagInjectionMiddleware implements HTTPMiddleware
 {
-    /**
-     * List of controllers that will be ignored by
-     * by TagInserter globally.
-     * 
-     * NOTE: TagInsert will ignore ALL instances of
-     * the below controllers.
-     * 
-     * @var array
-     */
-    private static $ignored_controllers = [
-        LeftAndMain::class,
-        DevBuildController::class,
+    private static $excluded_base_controllers = [
+        AdminRootController::class,
         DevelopmentAdmin::class,
-        Security::class
+        GraphQLController::class
     ];
-
-    public function afterCallActionHandler(HTTPRequest $request, $action, $response)
-    {
-        /** @var Controller */
-        $owner = $this->getOwner();
-        $ignored = Config::inst()
-            ->get(static::class, 'ignored_controllers');
-
-        if (!$owner instanceof Controller) {
-            return $response;
-        }
-
-        foreach ($ignored as $baseclass) {
-            if (is_a($owner, $baseclass)) {
-                return $response;
-            }
-        }
-
-        $data = null;
-
-        if ($owner->hasMethod('data')) {
-            $data = $owner->data();
-        }
-
-        if ($response instanceof DBField) {
-            $response->setValue(
-                $this->insertSnippetsIntoHTML($response->getValue()),
-                $data
-            );
-        }
-
-        return $response;
-    }
 
     protected function insertSnippetsIntoHTML($html)
     {
@@ -138,5 +90,47 @@ class TagInserter extends Extension
         }
 
         return $html;
+    }
+
+    public function process(HTTPRequest $request, callable $delegate)
+    {
+        $response = $delegate($request);
+        $ignore = Config::inst()->get(
+            self::class,
+            'excluded_base_controllers'
+        );
+
+        if (Director::is_cli()) {
+            return $response;
+        }
+
+        foreach ($ignore as $baseClass) {
+            $params = $request->routeParams();
+
+            if (!isset($params['Controller'])) {
+                continue;
+            }
+
+            $controller_class = str_replace(
+                ['%', '$', '.admin'],
+                '',
+                $params['Controller']
+            );
+
+            if (is_a($controller_class, $baseClass, true)) {
+                return $response;
+            }
+        }
+
+        $body = $response->getBody();
+
+        if (empty($body)) {
+            return $response;
+        }
+
+        $body = $this->insertSnippetsIntoHTML($body);
+        $response->setBody($body);
+
+        return $response;
     }
 }

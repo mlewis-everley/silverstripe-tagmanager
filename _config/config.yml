@@ -1,6 +1,10 @@
 ---
 Name: tagmanager
+After:
+  - requestprocessors
 ---
-SilverStripe\Control\RequestHandler:
-  extensions:
-   - SilverStripe\TagManager\Extension\TagInserter
+SilverStripe\Core\Injector\Injector:
+  SilverStripe\Control\Director:
+    properties:
+      Middlewares:
+        TagInjectionMiddleware: '%$SilverStripe\TagManager\Middleware\TagInjectionMiddleware'
